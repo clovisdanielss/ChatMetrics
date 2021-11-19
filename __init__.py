@@ -6,9 +6,14 @@ from dotenv import load_dotenv
 from zipfile import ZipFile
 from Dialogflow.get_dialogflow_intents import get_dialogflow_intents
 from Dialogflow.dialogflow_converter import dialogflow_converter
+from Training.tensorflow_intent_detection_training import get_training_model
+from Training.tensorflow_intent_detection_training import get_confusion_matrix as confusion_matrix
+from uuid import uuid1
 
 load_dotenv(".env")
 temp_folder = "./temp/"
+models = {}
+
 
 @anvil.server.callable
 def read_zip(file):
@@ -29,20 +34,49 @@ def read_zip(file):
             os.remove(file.name)
         return False
 
+
 @anvil.server.callable
 def read_intent(intent):
     filename = temp_folder + "intents/" + intent
     return dialogflow_converter(filename)
 
 
-def delete_temp_folder():
-    folders = os.listdir(".")
-    return None if "temp" not in folders else shutil.rmtree(temp_folder)
-
-
 @anvil.server.callable
 def get_hello():
     return "hello"
+
+
+@anvil.server.callable
+def get_default_model(epochs):
+    training = get_training_model(path=temp_folder, epochs=epochs)
+    uuid = str(uuid1())
+    models[uuid] = training
+    return uuid
+
+
+@anvil.server.callable
+def get_model_history(uuid):
+    if uuid in models.keys():
+        return models[uuid].history
+    else:
+        return {}
+
+
+@anvil.server.callable
+def get_confusion_matrix(uuid):
+    if uuid in models.keys():
+        data = models[uuid].data.name
+        labels = [data.iloc[i] for i in range(models[uuid].data.shape[0])]
+        cmnumpy = confusion_matrix(models[uuid]).to_numpy()
+        cm = []
+        for i in range(cmnumpy.shape[0]):
+            arr = []
+            for j in range(cmnumpy.shape[1]):
+                arr.append(int(cmnumpy[i, j]))
+            cm.append(arr[::-1])
+        return cm, labels
+    else:
+        return {}
 
 
 def run_server():
@@ -51,5 +85,11 @@ def run_server():
     anvil.server.wait_forever()
 
 
+def delete_temp_folder():
+    folders = os.listdir(".")
+    return None if "temp" not in folders else shutil.rmtree(temp_folder)
+
+
 if __name__ == "__main__":
     run_server()
+
