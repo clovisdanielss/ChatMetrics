@@ -9,6 +9,7 @@ from Dialogflow.dialogflow_converter import dialogflow_converter
 from Training.tensorflow_intent_detection_training import get_training_model
 from Training.tensorflow_intent_detection_training import get_confusion_matrix as confusion_matrix
 from uuid import uuid1
+from Metrics.metrics import false_negative, false_positives, true_negative, true_positives
 
 load_dotenv(".env")
 temp_folder = "./temp/"
@@ -65,8 +66,6 @@ def get_model_history(uuid):
 @anvil.server.callable
 def get_confusion_matrix(uuid):
     if uuid in models.keys():
-        data = models[uuid].data.name
-        labels = [data.iloc[i] for i in range(models[uuid].data.shape[0])]
         cmnumpy = confusion_matrix(models[uuid]).to_numpy()
         cm = []
         for i in range(cmnumpy.shape[0]):
@@ -74,10 +73,22 @@ def get_confusion_matrix(uuid):
             for j in range(cmnumpy.shape[1]):
                 arr.append(int(cmnumpy[i, j]))
             cm.append(arr[::-1])
-        return cm, labels
+        return cm
     else:
-        return {}
+        return []
 
+@anvil.server.callable
+def extract_tfpn(uuid):
+    if uuid in models.keys():
+        model = models[uuid]
+        cm = confusion_matrix(model)
+        tp = true_positives(cm, model)
+        fp = false_positives(cm, model)
+        tn = true_negative(cm, model)
+        fn = false_negative(cm, model)
+        return tp, fp, tn, fn
+    else:
+        return [], [], [], []
 
 def run_server():
     key = os.environ.get("TOKEN")
@@ -92,4 +103,3 @@ def delete_temp_folder():
 
 if __name__ == "__main__":
     run_server()
-
