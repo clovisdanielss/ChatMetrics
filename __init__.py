@@ -48,8 +48,8 @@ def get_hello():
 
 
 @anvil.server.callable
-def get_default_model(epochs):
-    training = get_training_model(path=temp_folder, epochs=epochs)
+def get_default_model(intents_json, epochs):
+    training = get_training_model(intents_json=intents_json, path=temp_folder, epochs=epochs)
     uuid = str(uuid1())
     models[uuid] = training
     return uuid

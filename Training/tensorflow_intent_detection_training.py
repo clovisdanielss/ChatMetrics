@@ -119,8 +119,9 @@ class TensorflowTrainingIntent(DefaultTraining):
         return [labels[intent_index] if return_name else intent_index for intent_index in prediction]
 
 
-def get_training_model(path, epochs=100) -> TensorflowTrainingIntent:
-    intents_json = get_dialogflow_intents_as_json(path)
+def get_training_model(intents_json=None, path="../temp/", epochs=100) -> TensorflowTrainingIntent:
+    if intents_json is None:
+        intents_json = get_dialogflow_intents_as_json(path)
     intents_json = pd.DataFrame(intents_json)
     training = TensorflowTrainingIntent(intents_json, PADDING=20)
     training.execute(epochs=epochs)
@@ -128,7 +129,7 @@ def get_training_model(path, epochs=100) -> TensorflowTrainingIntent:
 
 
 def execute():
-    training = get_training_model("../temp/")
+    training = get_training_model(path="../temp/")
     docs = np.array([
         "Oi",
         "obrigado",
