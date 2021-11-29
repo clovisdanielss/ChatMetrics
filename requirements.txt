@@ -1,0 +1,6 @@
+tensorflow==2.6.2
+anvil-uplink
+pandas
+numpy
+sklearn
+python-dotenv==0.19.2
