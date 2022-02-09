@@ -22,3 +22,12 @@ def get_dialogflow_intents_as_json(path):
         intent_json, entity_json = dialogflow_converter(path + "intents/" + intent_name)
         intents_json.append(intent_json)
     return intents_json
+
+
+def get_dialogflow_entities_as_json(path):
+    intents, intents_paths = get_dialogflow_intents(path)
+    entities_json = []
+    for intent_name in intents:
+        intent_json, entity_json = dialogflow_converter(path + "intents/" + intent_name)
+        entities_json += entity_json
+    return entities_json

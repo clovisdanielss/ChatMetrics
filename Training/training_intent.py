@@ -11,16 +11,18 @@ import json
 from Dialogflow.get_dialogflow_intents import get_dialogflow_intents_as_json
 from Metrics.metrics import get_confusion_matrix, true_positives, false_positives, false_negative, true_negative
 from sklearn.model_selection import train_test_split
+import spacy
 
 from Training.default_training import DefaultTraining
 from util import Util
 
 
-class TensorflowTrainingIntent(DefaultTraining):
+class TrainingIntent(DefaultTraining):
 
-    def __init__(self, data: pd.DataFrame, EMBEDDING_DIM=100, PADDING=15):
-        super(TensorflowTrainingIntent, self).__init__()
+    def __init__(self, raw_data, data: pd.DataFrame, EMBEDDING_DIM=100, PADDING=15):
+        super(TrainingIntent, self).__init__()
         self.data = data
+        self.raw_data = raw_data
         self.EMBEDDING_DIM = EMBEDDING_DIM
         self.PADDING = PADDING
 
@@ -31,13 +33,19 @@ class TensorflowTrainingIntent(DefaultTraining):
         self.stopwords = stopwords
 
     def get_preprocessing_data(self):
-        super(TensorflowTrainingIntent, self).get_preprocessing_data()
+        super(TrainingIntent, self).get_preprocessing_data()
         return self._preprocessing_data
 
     def __preprocess__(self):
         if self.data is None:
             raise ValueError("data must not be None")
         phrases = []
+        classes_dict = {}
+        index = 0
+        for intent in self.raw_data:
+            classes_dict[intent["name"]] = index
+            index += 1
+        self.classes_dict = classes_dict
         for i in range(self.data.shape[0]):
             for phrase in self.data.iloc[i]["phrases"]:
                 phrase = Util.remove_punctuation(phrase)
@@ -58,7 +66,7 @@ class TensorflowTrainingIntent(DefaultTraining):
         self._preprocessing_data["tokenized"] = tensor.numpy().tolist()
 
     def __build_model__(self):
-        super(TensorflowTrainingIntent, self).__build_model__()
+        super(TrainingIntent, self).__build_model__()
         self.model = keras.Sequential([
             keras.layers.Embedding(len(self.to_vector.get_vocabulary()), self.EMBEDDING_DIM, input_length=self.PADDING),
             keras.layers.LSTM(self.data.shape[0]),
@@ -66,7 +74,7 @@ class TensorflowTrainingIntent(DefaultTraining):
         ])
 
     def __compile_model__(self, epochs=100, batch_size=2):
-        super(TensorflowTrainingIntent, self).__compile_model__(ephocs=epochs, batch_size=batch_size)
+        super(TrainingIntent, self).__compile_model__(ephocs=epochs, batch_size=batch_size)
         self.model.summary()
         self.model.compile(optimizer='adam',
                            loss=tf.losses.CategoricalCrossentropy(from_logits=True),
@@ -102,7 +110,7 @@ class TensorflowTrainingIntent(DefaultTraining):
 
     def load_model(self, model_path="../temp/nlp/tensorflow/intent_detector.h5",
                    vocabulary_path="../temp/nlp/tensorflow/vocabulary.json"):
-        super(TensorflowTrainingIntent, self).load_model(model_path)
+        super(TrainingIntent, self).load_model(model_path)
         if model_path:
             self.model = load_model(model_path)
             with open(vocabulary_path, "r", encoding="utf-8") as vocabulary:
@@ -110,20 +118,87 @@ class TensorflowTrainingIntent(DefaultTraining):
                                                    output_sequence_length=self.model.get_layer(
                                                        index=0).input_length)
 
-    def predict(self, docs: np.ndarray, return_name=True):
+    def predict(self, docs: np.ndarray, return_name=True, use_entity_heuristic=False):
         vectors = self.to_vector(docs)
         prediction = self.model.predict(vectors)
+        if use_entity_heuristic:
+            nlp = spacy.load("pt_core_news_sm")
+            ef = entity_frequency(nlp, self.raw_data, self.classes_dict)
+            prediction = heuristic(nlp, prediction, docs.tolist(), ef)
         data = self.data.name
         labels = [data.iloc[i] for i in range(self.data.shape[0])]
         prediction = np.argmax(prediction, axis=1)
         return [labels[intent_index] if return_name else intent_index for intent_index in prediction]
 
 
-def get_training_model(intents_json=None, path="../temp/", epochs=100) -> TensorflowTrainingIntent:
-    if intents_json is None:
-        intents_json = get_dialogflow_intents_as_json(path)
-    intents_json = pd.DataFrame(intents_json)
-    training = TensorflowTrainingIntent(intents_json, PADDING=20)
+def heuristic(nlp, predictions, phrases, entity_frequency_by_intent):
+    for i in range(len(phrases)):
+        phrase = phrases[i]
+        prediction = predictions[i, :]
+        total_classes = predictions.shape[1]
+        freq = entity_frequency_by_phrase(nlp, phrase)
+        for ent_type in freq.keys():
+            print(f"Entidade: {ent_type}")
+            for j in range(total_classes):
+                efbi = entity_frequency_by_intent[j]
+                if ent_type in efbi.keys():
+                    print(f"val = {prediction[j]} * {entity_frequency_by_intent[j][ent_type]} * {freq[ent_type]}")
+                    val = prediction[j] * entity_frequency_by_intent[j][ent_type] * freq[ent_type]
+                    print(f"val = {val}")
+                    print(f"prediction[j] = {prediction[j]}")
+                    prediction[j] += val
+                    underflow = 0
+                    for k in range(total_classes):
+                        if k != j:
+                            print(f"prediction[{k}] = {prediction[k]}")
+                            prediction[k] -= val / (total_classes - 1)
+                            if (prediction[k] < 0):
+                                underflow += (-1) * prediction[k]
+                                prediction[k] = 0
+                            print(f"prediction[{k}] = {prediction[k]}")
+                    prediction[j] -= underflow
+                    print(f"prediction[j] = {prediction[j]}")
+                    predictions[i, :] = prediction
+                else:
+                    continue
+    return predictions
+
+
+def entity_frequency(nlp, intents, classes_dict):
+    entity_frequency_by_intent = {}
+    for intent in intents:
+        intent_index = classes_dict[intent["name"]]
+        entity_frequency_by_intent[intent_index] = {}
+        total_phrases = len(intent["phrases"])
+        for phrase in intent["phrases"]:
+            frequency = entity_frequency_by_phrase(nlp, phrase, total_phrases=total_phrases)
+            for ent_type in frequency.keys():
+                if ent_type in entity_frequency_by_intent[intent_index].keys():
+                    entity_frequency_by_intent[intent_index][ent_type] += frequency[ent_type]
+                else:
+                    entity_frequency_by_intent[intent_index][ent_type] = frequency[ent_type]
+    return entity_frequency_by_intent
+
+
+def entity_frequency_by_phrase(nlp, phrase, total_phrases=1):
+    result = {}
+    doc = nlp(phrase)
+    for word in doc:
+        ent_type = word.ent_type_
+        if ent_type is '':
+            continue
+        if ent_type in result.keys():
+            result[ent_type] += 1 / total_phrases
+        else:
+            result[ent_type] = 1 / total_phrases
+    return result
+
+
+def get_training_model(raw_intents_json=None, path="../temp/", epochs=100) -> TrainingIntent:
+    if raw_intents_json is None:
+        raw_intents_json = get_dialogflow_intents_as_json(path)
+    intents_json = pd.DataFrame(raw_intents_json)
+    training = TrainingIntent(raw_intents_json, intents_json, PADDING=20)
     training.execute(epochs=epochs)
     return training
 
@@ -137,15 +212,17 @@ def execute():
         "Que horas funcioname ?",
     ])
     prediction = training.predict(docs)
-    cm = get_confusion_matrix(training)
+    data = training.data.name
+    classes_names = [data.iloc[i] for i in range(training.data.shape[0])]
+    cm = get_confusion_matrix(training, classes_names, use_entity_heuristic=True)
     print(cm)
-    tp = true_positives(cm, training)
+    tp = true_positives(cm, classes_names)
     print(tp)
-    fp = false_positives(cm, training)
+    fp = false_positives(cm, classes_names)
     print(fp)
-    fn = false_negative(cm, training)
+    fn = false_negative(cm, classes_names)
     print(fn)
-    tn = true_negative(cm, training)
+    tn = true_negative(cm, classes_names)
     print(tn)
     print(tn + fn + tp + fp, training.get_preprocessing_data().shape)
     # training.save_model("intent_detector")

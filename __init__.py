@@ -6,8 +6,8 @@ from dotenv import load_dotenv
 from zipfile import ZipFile
 from Dialogflow.get_dialogflow_intents import get_dialogflow_intents
 from Dialogflow.dialogflow_converter import dialogflow_converter
-from Training.tensorflow_intent_detection_training import get_training_model
-from Training.tensorflow_intent_detection_training import get_confusion_matrix as confusion_matrix
+from Training.training_intent import get_training_model
+from Training.training_intent import get_confusion_matrix as confusion_matrix
 from uuid import uuid1
 from Metrics.metrics import false_negative, false_positives, true_negative, true_positives
 
@@ -49,7 +49,7 @@ def get_hello():
 
 @anvil.server.callable
 def get_default_model(intents_json, epochs):
-    training = get_training_model(intents_json=intents_json, path=temp_folder, epochs=epochs)
+    training = get_training_model(raw_intents_json=intents_json, path=temp_folder, epochs=epochs)
     uuid = str(uuid1())
     models[uuid] = training
     return uuid
@@ -66,7 +66,9 @@ def get_model_history(uuid):
 @anvil.server.callable
 def get_confusion_matrix(uuid):
     if uuid in models.keys():
-        cmnumpy = confusion_matrix(models[uuid]).to_numpy()
+        data = models[uuid].data.name
+        classes_names = [data.iloc[i] for i in range(models[uuid].data.shape[0])]
+        cmnumpy = confusion_matrix(models[uuid], classes_names).to_numpy()
         cm = []
         for i in range(cmnumpy.shape[0]):
             arr = []
@@ -81,11 +83,13 @@ def get_confusion_matrix(uuid):
 def extract_tfpn(uuid):
     if uuid in models.keys():
         model = models[uuid]
-        cm = confusion_matrix(model)
-        tp = true_positives(cm, model)
-        fp = false_positives(cm, model)
-        tn = true_negative(cm, model)
-        fn = false_negative(cm, model)
+        data = model.data.name
+        classes_names = [data.iloc[i] for i in range(model.data.shape[0])]
+        cm = confusion_matrix(model, classes_names)
+        tp = true_positives(cm, classes_names)
+        fp = false_positives(cm, classes_names)
+        tn = true_negative(cm, classes_names)
+        fn = false_negative(cm, classes_names)
         return tp, fp, tn, fn
     else:
         return [], [], [], []
