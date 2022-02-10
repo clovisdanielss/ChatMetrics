@@ -118,11 +118,17 @@ class TrainingIntent(DefaultTraining):
                                                    output_sequence_length=self.model.get_layer(
                                                        index=0).input_length)
 
-    def predict(self, docs: np.ndarray, return_name=True, use_entity_heuristic=False):
+    def predict(self, docs: np.ndarray, return_name=True, use_entity_heuristic=None):
         vectors = self.to_vector(docs)
         prediction = self.model.predict(vectors)
         if use_entity_heuristic:
-            nlp = spacy.load("pt_core_news_sm")
+            nlp = None
+            try:
+                nlp = spacy.load(use_entity_heuristic)
+                nlp.from_disk(use_entity_heuristic)
+            except:
+                print("Erro ao carregar modelo existente. Usando modelo padrão...")
+                nlp = spacy.load("pt_core_news_sm")
             ef = entity_frequency(nlp, self.raw_data, self.classes_dict)
             prediction = heuristic(nlp, prediction, docs.tolist(), ef)
         data = self.data.name
@@ -131,33 +137,39 @@ class TrainingIntent(DefaultTraining):
         return [labels[intent_index] if return_name else intent_index for intent_index in prediction]
 
 
-def heuristic(nlp, predictions, phrases, entity_frequency_by_intent):
+def heuristic(nlp, predictions, phrases, entity_frequency_by_intent, verbose=False):
     for i in range(len(phrases)):
         phrase = phrases[i]
         prediction = predictions[i, :]
         total_classes = predictions.shape[1]
         freq = entity_frequency_by_phrase(nlp, phrase)
         for ent_type in freq.keys():
-            print(f"Entidade: {ent_type}")
+            if verbose:
+                print(f"Entidade: {ent_type}")
             for j in range(total_classes):
                 efbi = entity_frequency_by_intent[j]
                 if ent_type in efbi.keys():
-                    print(f"val = {prediction[j]} * {entity_frequency_by_intent[j][ent_type]} * {freq[ent_type]}")
+                    if verbose:
+                        print(f"val = {prediction[j]} * {entity_frequency_by_intent[j][ent_type]} * {freq[ent_type]}")
                     val = prediction[j] * entity_frequency_by_intent[j][ent_type] * freq[ent_type]
-                    print(f"val = {val}")
-                    print(f"prediction[j] = {prediction[j]}")
+                    if verbose:
+                        print(f"val = {val}")
+                        print(f"prediction[j] = {prediction[j]}")
                     prediction[j] += val
                     underflow = 0
                     for k in range(total_classes):
                         if k != j:
-                            print(f"prediction[{k}] = {prediction[k]}")
+                            if verbose:
+                                print(f"prediction[{k}] = {prediction[k]}")
                             prediction[k] -= val / (total_classes - 1)
                             if (prediction[k] < 0):
                                 underflow += (-1) * prediction[k]
                                 prediction[k] = 0
-                            print(f"prediction[{k}] = {prediction[k]}")
+                            if verbose:
+                                print(f"prediction[{k}] = {prediction[k]}")
                     prediction[j] -= underflow
-                    print(f"prediction[j] = {prediction[j]}")
+                    if verbose:
+                        print(f"prediction[j] = {prediction[j]}")
                     predictions[i, :] = prediction
                 else:
                     continue
@@ -198,7 +210,7 @@ def get_training_model(raw_intents_json=None, path="../temp/", epochs=100) -> Tr
     if raw_intents_json is None:
         raw_intents_json = get_dialogflow_intents_as_json(path)
     intents_json = pd.DataFrame(raw_intents_json)
-    training = TrainingIntent(raw_intents_json, intents_json, PADDING=20)
+    training = TrainingIntent(raw_intents_json, intents_json, PADDING=15)
     training.execute(epochs=epochs)
     return training
 
@@ -214,16 +226,27 @@ def execute():
     prediction = training.predict(docs)
     data = training.data.name
     classes_names = [data.iloc[i] for i in range(training.data.shape[0])]
-    cm = get_confusion_matrix(training, classes_names, use_entity_heuristic=True)
+    cm = get_confusion_matrix(training, classes_names, use_entity_heuristic=False)
     print(cm)
     tp = true_positives(cm, classes_names)
-    print(tp)
+    print(tp, sum(tp))
     fp = false_positives(cm, classes_names)
-    print(fp)
+    print(fp, sum(fp))
     fn = false_negative(cm, classes_names)
-    print(fn)
+    print(fn, sum(fn))
     tn = true_negative(cm, classes_names)
-    print(tn)
+    print(tn, sum(tn))
+    print(tn + fn + tp + fp, training.get_preprocessing_data().shape)
+    cm = get_confusion_matrix(training, classes_names, use_entity_heuristic="../temp/spacy")
+    print(cm)
+    tp = true_positives(cm, classes_names)
+    print(tp, sum(tp))
+    fp = false_positives(cm, classes_names)
+    print(fp, sum(fp))
+    fn = false_negative(cm, classes_names)
+    print(fn, sum(fn))
+    tn = true_negative(cm, classes_names)
+    print(tn, sum(tn))
     print(tn + fn + tp + fp, training.get_preprocessing_data().shape)
     # training.save_model("intent_detector")
 

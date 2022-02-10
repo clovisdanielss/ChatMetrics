@@ -4,10 +4,13 @@ import tensorflow as tf
 import pandas as pd
 
 
-def get_confusion_matrix(training: DefaultTraining, classes_names, use_entity_heuristic = False):
+def get_confusion_matrix(training: DefaultTraining, classes_names, use_entity_heuristic=False):
     phrases = training.get_preprocessing_data()["phrases"].to_numpy()
     true_class = training.get_preprocessing_data()["classes"]
-    prediction = np.array(training.predict(phrases, return_name=False, use_entity_heuristic=use_entity_heuristic))
+    if use_entity_heuristic:
+        prediction = np.array(training.predict(phrases, return_name=False, use_entity_heuristic=use_entity_heuristic))
+    else:
+        prediction = np.array(training.predict(phrases, return_name=False))
     cm = tf.math.confusion_matrix(labels=true_class, predictions=prediction).numpy()
     return pd.DataFrame(cm, columns=classes_names, index=classes_names)
 

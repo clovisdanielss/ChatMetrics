@@ -7,6 +7,7 @@ from zipfile import ZipFile
 from Dialogflow.get_dialogflow_intents import get_dialogflow_intents
 from Dialogflow.dialogflow_converter import dialogflow_converter
 from Training.training_intent import get_training_model
+from Training.spacy_ner_training import get_training_model as get_er_model
 from Training.training_intent import get_confusion_matrix as confusion_matrix
 from uuid import uuid1
 from Metrics.metrics import false_negative, false_positives, true_negative, true_positives
@@ -54,7 +55,6 @@ def get_default_model(intents_json, epochs):
     models[uuid] = training
     return uuid
 
-
 @anvil.server.callable
 def get_model_history(uuid):
     if uuid in models.keys():
@@ -64,11 +64,20 @@ def get_model_history(uuid):
 
 
 @anvil.server.callable
-def get_confusion_matrix(uuid):
+def get_confusion_matrix(uuid, use_entities_heuristic=False):
     if uuid in models.keys():
         data = models[uuid].data.name
         classes_names = [data.iloc[i] for i in range(models[uuid].data.shape[0])]
-        cmnumpy = confusion_matrix(models[uuid], classes_names).to_numpy()
+        if use_entities_heuristic:
+            er_model = get_er_model(epochs=10, path='./temp/')
+            if not os.path.isdir('./temp/spacy'):
+                os.mkdir('./temp/spacy')
+                er_model.save_model('./temp/spacy')
+            while not os.path.isdir('./temp/spacy') or not os.path.isfile('./temp/spacy/config.cfg'):
+                continue
+            cmnumpy = confusion_matrix(models[uuid], classes_names, use_entity_heuristic='./temp/spacy').to_numpy()
+        else:
+            cmnumpy = confusion_matrix(models[uuid], classes_names).to_numpy()
         cm = []
         for i in range(cmnumpy.shape[0]):
             arr = []
